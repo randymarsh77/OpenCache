@@ -2,13 +2,14 @@
 Nix binary cache
 
 A self-hosted [Nix binary cache](https://nixos.wiki/wiki/Binary_Cache) server built with Node.js.
-Store and serve Nix store paths (NARs + narinfo files) using either local disk or any
-S3-compatible object store (AWS S3, Cloudflare R2, Backblaze B2, MinIO, …).
+Store and serve Nix store paths (NARs + narinfo files) using either local disk, any
+S3-compatible object store (AWS S3, Cloudflare R2, Backblaze B2, MinIO, …), or GitHub Releases.
 
 ## Features
 
 * Full Nix binary cache HTTP API (`/nix-cache-info`, `/:hash.narinfo`, `/nar/:filename`)
-* Local filesystem storage **and** S3-compatible storage backends
+* Local filesystem, S3-compatible, and **GitHub Releases** storage backends
+* **Static site generation** – export your cache as static files deployable to Cloudflare Pages, GitHub Pages, etc.
 * Optional narinfo signing with an ed25519 key pair
 * Optional upload authentication via a shared bearer token
 * Configured entirely through environment variables – easy to deploy on any platform
@@ -43,7 +44,7 @@ All options are set via environment variables:
 | `PORT` | `8080` | HTTP port to listen on |
 | `STORE_DIR` | `/nix/store` | Nix store directory |
 | `CACHE_PRIORITY` | `30` | Cache priority (lower = higher priority) |
-| `STORAGE_BACKEND` | `local` | `local` or `s3` |
+| `STORAGE_BACKEND` | `local` | `local`, `s3`, or `github-releases` |
 | `LOCAL_STORAGE_PATH` | `./cache` | Root directory for local storage |
 | `S3_BUCKET` | *(required for s3)* | S3 bucket name |
 | `S3_REGION` | `auto` | S3 region |
@@ -53,6 +54,10 @@ All options are set via environment variables:
 | `S3_FORCE_PATH_STYLE` | `false` | Use path-style S3 URLs |
 | `SIGNING_KEY` | *(disabled)* | Signing key `<keyname>:<base64-ed25519-private>` |
 | `UPLOAD_SECRET` | *(open)* | Bearer token required for PUT requests |
+| `GITHUB_TOKEN` | | GitHub personal access token (for `github-releases` backend) |
+| `GITHUB_OWNER` | | GitHub repository owner |
+| `GITHUB_REPO` | | GitHub repository name |
+| `GITHUB_RELEASE_TAG` | `nix-cache` | Tag name for the GitHub Release holding NAR files |
 
 ### Generating a signing key pair
 
@@ -78,4 +83,71 @@ npm start
 
 ```bash
 npm test
+```
+
+## GitHub Releases + Static Site
+
+For projects that want to serve a Nix binary cache cheaply using static hosting
+(Cloudflare Pages, GitHub Pages, etc.) with NAR binaries stored on GitHub Releases:
+
+### How it works
+
+1. **NAR files** are uploaded as GitHub Release assets (free binary hosting)
+2. **narinfo + nix-cache-info** are generated as static files you deploy to any static host
+3. A `_redirects` file (Cloudflare Pages compatible) redirects `/nar/*` requests to GitHub Releases
+
+### Workflow
+
+**Step 1 – Push store paths to OpenCache using the `github-releases` backend:**
+
+```bash
+STORAGE_BACKEND=github-releases \
+GITHUB_TOKEN=ghp_... \
+GITHUB_OWNER=myorg \
+GITHUB_REPO=myproject \
+GITHUB_RELEASE_TAG=nix-cache \
+SIGNING_KEY='my-cache-1:<base64-private>' \
+npm start
+```
+
+Then push paths with `nix copy`:
+
+```bash
+nix copy --to 'http://localhost:8080?compression=none' /nix/store/<hash>-<name>
+```
+
+**Step 2 – Generate the static site:**
+
+```bash
+GITHUB_OWNER=myorg \
+GITHUB_REPO=myproject \
+GITHUB_RELEASE_TAG=nix-cache \
+OUTPUT_DIR=./site \
+npm run generate-static
+```
+
+This produces a directory with:
+
+```
+site/
+  nix-cache-info        # Cache metadata
+  <hash>.narinfo        # One per cached store path
+  _redirects            # Cloudflare Pages: redirects /nar/* → GitHub Releases
+```
+
+**Step 3 – Deploy the static site:**
+
+```bash
+# Cloudflare Pages
+npx wrangler pages deploy ./site
+
+# Or commit to a GitHub Pages branch, Netlify, etc.
+```
+
+**Step 4 – Point Nix at your cache:**
+
+```nix
+# /etc/nix/nix.conf (or flake.nix extraOptions)
+substituters = https://cache.nixos.org https://my-cache.example.com
+trusted-public-keys = cache.nixos.org-1:... my-cache-1:<base64-public>
 ```

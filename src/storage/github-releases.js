@@ -142,7 +142,9 @@ class GitHubReleasesStorage {
   async putNarStream(filename, readableStream) {
     const releaseId = await this._getReleaseId();
 
-    // Collect stream into buffer for upload
+    // Collect stream into buffer for upload.
+    // Note: GitHub's upload API requires Content-Length, so the full NAR
+    // must be buffered.  For very large NARs consider using S3 storage.
     const chunks = [];
     for await (const chunk of readableStream) {
       chunks.push(Buffer.from(chunk));
@@ -176,19 +178,29 @@ class GitHubReleasesStorage {
   }
 
   /**
-   * Find a release asset by filename.
+   * Find a release asset by filename (paginates through all assets).
    * @param {string} filename
    * @returns {Promise<object|null>}
    */
   async _findAsset(filename) {
     const releaseId = await this._getReleaseId();
-    const url = `https://api.github.com/repos/${this.owner}/${this.repo}/releases/${releaseId}/assets?per_page=100`;
-    const resp = await fetch(url, { headers: this._headers() });
+    let page = 1;
 
-    if (!resp.ok) return null;
+    while (true) {
+      const url = `https://api.github.com/repos/${this.owner}/${this.repo}/releases/${releaseId}/assets?per_page=100&page=${page}`;
+      const resp = await fetch(url, { headers: this._headers() });
 
-    const assets = await resp.json();
-    return assets.find(a => a.name === filename) || null;
+      if (!resp.ok) return null;
+
+      const assets = await resp.json();
+      if (assets.length === 0) return null;
+
+      const match = assets.find(a => a.name === filename);
+      if (match) return match;
+
+      if (assets.length < 100) return null;
+      page++;
+    }
   }
 
   /**
