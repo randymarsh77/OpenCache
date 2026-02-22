@@ -2,7 +2,7 @@ name: Deploy Cache
 
 on:
   push:
-    branches: [main]
+    branches: [master]
   workflow_dispatch:
 
 permissions:
