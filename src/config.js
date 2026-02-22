@@ -7,7 +7,7 @@ module.exports = {
 
   priority: parseInt(process.env.CACHE_PRIORITY || '30', 10),
 
-  // Storage backend: 'local' or 's3'
+  // Storage backend: 'local', 's3', or 'github-releases'
   storageBackend: process.env.STORAGE_BACKEND || 'local',
 
   // Local storage path
@@ -22,6 +22,14 @@ module.exports = {
     secretAccessKey: process.env.S3_SECRET_ACCESS_KEY || '',
     // Set to true to force path-style URLs (needed for some S3-compatible stores)
     forcePathStyle: process.env.S3_FORCE_PATH_STYLE === 'true',
+  },
+
+  // GitHub Releases config (used by 'github-releases' storage backend)
+  github: {
+    token: process.env.GITHUB_TOKEN || '',
+    owner: process.env.GITHUB_OWNER || '',
+    repo: process.env.GITHUB_REPO || '',
+    releaseTag: process.env.GITHUB_RELEASE_TAG || 'nix-cache',
   },
 
   // Signing key: '<keyname>:<base64-encoded-ed25519-private-key>'

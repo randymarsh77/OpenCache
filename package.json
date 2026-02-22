@@ -5,6 +5,7 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
+    "generate-static": "node generate-static.js",
     "test": "jest tests/"
   },
   "repository": {
