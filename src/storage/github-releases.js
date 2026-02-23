@@ -7,6 +7,7 @@ const stream = require('stream');
 const { promisify } = require('util');
 
 const pipeline = promisify(stream.pipeline);
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 /**
  * GitHub Releases storage backend.
@@ -302,7 +303,7 @@ class GitHubReleasesStorage {
     console.log(`[github-releases] Found ${assets.length} release asset(s), ${referenced.size} referenced NAR filename(s)`);
 
     const cutoff = retentionDays > 0
-      ? new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000)
+      ? new Date(Date.now() - retentionDays * MS_PER_DAY)
       : null;
 
     const deleted = [];
