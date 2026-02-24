@@ -37,7 +37,6 @@ jobs:
 
       - uses: randymarsh77/OpenCache/deploy@v1
         with:
-          snapshot-path: /tmp/opencache-setup/store-paths-before.txt
           github-token: ${{ secrets.GITHUB_TOKEN }}
           static: ./site
 ```

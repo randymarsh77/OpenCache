@@ -12,9 +12,9 @@ inputs:
     description: 'Path to a nix binary cache export directory (from restore action). When set, paths are copied from this store instead of the local nix store.'
     required: false
   snapshot-path:
-    description: 'Path to the store snapshot file from the setup action. When set (and paths/paths-file are omitted), new store paths are auto-detected by diffing the nix store.'
+    description: 'Path to the store snapshot file from the setup action. When the file exists (and paths/paths-file are omitted), new store paths are auto-detected by diffing the nix store.'
     required: false
-    default: ''
+    default: '/tmp/opencache-setup/store-paths-before.txt'
   store-dir:
     description: 'Path to the Nix store directory (used for auto-detection)'
     required: false

@@ -25,7 +25,6 @@ jobs:
 
       - uses: randymarsh77/OpenCache/deploy@v1
         with:
-          snapshot-path: /tmp/opencache-setup/store-paths-before.txt
           backend: github-releases
           github-token: ${{ secrets.GITHUB_TOKEN }}
           static: ./site
@@ -95,7 +94,6 @@ jobs:
       - uses: randymarsh77/OpenCache/deploy@v1
         with:
           magic-nix-cache-addr: '127.0.0.1:37515'
-          snapshot-path: /tmp/opencache-setup/store-paths-before.txt
           backend: github-releases
           github-token: ${{ secrets.GITHUB_TOKEN }}
           static: ./site
@@ -164,7 +162,7 @@ Starts a temporary OpenCache server, pushes store paths to the configured backen
 | `paths` | ¹ | | Newline-separated store paths (standalone mode) |
 | `paths-file` | ¹ | | File listing store paths (e.g. from `restore`) |
 | `export-dir` | no | | Binary cache export dir (from `restore`). When set, NARs are read from this directory instead of the local nix store. |
-| `snapshot-path` | ¹ | | Store snapshot from `setup` (for auto-detection) |
+| `snapshot-path` | no | `/tmp/opencache-setup/store-paths-before.txt` | Store snapshot from `setup` (for auto-detection). The default matches the `setup` action output. |
 | `store-dir` | no | `/nix/store` | Path to the Nix store directory |
 | `magic-nix-cache-addr` | ¹ | | Address of a running magic-nix-cache daemon (default for magic-nix-cache-action is `127.0.0.1:37515`). Notifies the daemon and uses snapshot-based diffing if available. |
 | `backend` | no | `github-releases` | Storage backend |
@@ -178,4 +176,4 @@ Starts a temporary OpenCache server, pushes store paths to the configured backen
 | `port` | no | `18734` | Temporary server port |
 | `compression` | no | `none` | Compression for `nix copy` |
 
-¹ One of `paths`, `paths-file`, `snapshot-path`, or `magic-nix-cache-addr` is required.
+¹ One of `paths`, `paths-file`, or `magic-nix-cache-addr` is required unless the `setup` action was used (which provides the default `snapshot-path`).
