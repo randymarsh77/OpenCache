@@ -35,7 +35,7 @@ jobs:
 
       # Build OpenCache itself with Nix so we have a store path to cache
       - name: Build flake
-        run: nix build .#default --print-out-paths | tee /tmp/store-paths.txt
+        run: nix build .#default --print-out-paths --accept-flake-config | tee /tmp/store-paths.txt
 
       # Start the OpenCache server with github-releases backend
       - name: Start OpenCache
