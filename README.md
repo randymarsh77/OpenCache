@@ -36,15 +36,19 @@ jobs:
       - uses: actions/checkout@v4
       - uses: DeterminateSystems/nix-installer-action@main
 
+      - uses: randymarsh77/OpenCache/setup@v1
+
       - name: Build
-        run: nix build --print-out-paths | tee /tmp/store-paths.txt
+        run: nix build
 
       - uses: randymarsh77/OpenCache/deploy@v1
         with:
-          paths-file: /tmp/store-paths.txt
+          snapshot-path: /tmp/opencache-setup/store-paths-before.txt
           github-token: ${{ secrets.GITHUB_TOKEN }}
           static: ./site
 ```
+
+No need to capture store paths manually — the **setup** action snapshots the Nix store before your build, and the **deploy** action auto-detects new paths by diffing the store.
 
 Then point Nix at your cache:
 
