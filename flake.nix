@@ -2,7 +2,7 @@
   description = "OpenCache – self-hosted Nix binary cache server";
 
   nixConfig = {
-    extra-substituters = [ "https://randymarsh77.github.io/opencache/cache" ];
+    extra-substituters = [ "https://randymarsh77.github.io/OpenCache" ];
   };
 
   inputs = {
