@@ -45,9 +45,43 @@ describe('GitHubReleasesStorage', () => {
 
   test('putNarinfo and getNarinfo round-trip', async () => {
     const content = 'StorePath: /nix/store/deadbeef-example\n';
+
+    mockFetch
+      // _getReleaseId: get release by tag
+      .mockResolvedValueOnce({ ok: true, json: async () => releaseResponse })
+      // _findAsset: list assets (no existing narinfo)
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      // Upload narinfo asset
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ id: 5, name: 'deadbeef.narinfo' }) });
+
     await storage.putNarinfo('deadbeef', content);
     expect(await storage.hasNarinfo('deadbeef')).toBe(true);
     expect(await storage.getNarinfo('deadbeef')).toBe(content);
+
+    // Verify narinfo was uploaded to the release
+    const uploadCall = mockFetch.mock.calls[2];
+    expect(uploadCall[0]).toContain('uploads.github.com');
+    expect(uploadCall[0]).toContain('name=deadbeef.narinfo');
+    expect(uploadCall[1].method).toBe('POST');
+  });
+
+  test('putNarinfo uploads narinfo as release asset', async () => {
+    const content = 'StorePath: /nix/store/abc-pkg\nURL: nar/abc.nar.xz\n';
+
+    mockFetch
+      // _getReleaseId
+      .mockResolvedValueOnce({ ok: true, json: async () => releaseResponse })
+      // _findAsset: no existing
+      .mockResolvedValueOnce({ ok: true, json: async () => [] })
+      // Upload
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ id: 10, name: 'abc.narinfo' }) });
+
+    await storage.putNarinfo('abc', content);
+
+    expect(mockFetch).toHaveBeenCalledTimes(3);
+    const uploadCall = mockFetch.mock.calls[2];
+    expect(uploadCall[0]).toContain('name=abc.narinfo');
+    expect(uploadCall[1].headers['Content-Type']).toBe('text/plain');
   });
 
   test('getNarinfo returns null for missing entry', async () => {
@@ -155,9 +189,9 @@ describe('GitHubReleasesStorage', () => {
   // ── Pruning ───────────────────────────────────────────────────────────────
 
   test('pruneAssets deletes orphaned assets', async () => {
-    // Write a narinfo referencing only "referenced.nar.xz"
+    // Write a narinfo referencing only "referenced.nar.xz" (directly to filesystem)
     const narinfo = 'StorePath: /nix/store/abc-example\nURL: nar/referenced.nar.xz\nNarHash: sha256:abc\nNarSize: 100\n';
-    await storage.putNarinfo('abc', narinfo);
+    fs.writeFileSync(path.join(tmpDir, 'narinfo', 'abc.narinfo'), narinfo);
 
     const now = new Date().toISOString();
 
@@ -214,7 +248,7 @@ describe('GitHubReleasesStorage', () => {
 
   test('pruneAssets with no orphaned assets deletes nothing', async () => {
     const narinfo = 'StorePath: /nix/store/abc-example\nURL: nar/only.nar.xz\nNarHash: sha256:abc\nNarSize: 100\n';
-    await storage.putNarinfo('abc', narinfo);
+    fs.writeFileSync(path.join(tmpDir, 'narinfo', 'abc.narinfo'), narinfo);
 
     mockFetch
       .mockResolvedValueOnce({ ok: true, json: async () => releaseResponse })
@@ -242,5 +276,77 @@ describe('GitHubReleasesStorage', () => {
     expect(result.deleted).toEqual([]);
     expect(result.referenced).toEqual([]);
     expect(result.kept).toEqual([]);
+  });
+
+  test('pruneAssets skips narinfo assets', async () => {
+    const now = new Date().toISOString();
+
+    mockFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => releaseResponse })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => [
+          { name: 'abc.narinfo', id: 40, created_at: now },
+          { name: 'orphaned.nar.xz', id: 41, created_at: now },
+        ],
+      })
+      // Delete orphaned NAR
+      .mockResolvedValueOnce({ ok: true });
+
+    const result = await storage.pruneAssets();
+
+    // narinfo asset should NOT be deleted or counted as orphaned
+    expect(result.deleted).toEqual(['orphaned.nar.xz']);
+    expect(result.referenced).toEqual([]);
+    expect(result.kept).toEqual([]);
+  });
+
+  // ── fetchAllNarinfo ─────────────────────────────────────────────────────────
+
+  test('fetchAllNarinfo downloads narinfo assets from release', async () => {
+    const narinfoContent = 'StorePath: /nix/store/xyz-pkg\nURL: nar/xyz.nar.xz\n';
+
+    mockFetch
+      // _listAllAssets: get release
+      .mockResolvedValueOnce({ ok: true, json: async () => releaseResponse })
+      // _listAllAssets: list assets
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => [
+          { name: 'xyz.narinfo', id: 50, url: 'https://api.github.com/repos/testowner/testrepo/releases/assets/50' },
+          { name: 'some.nar.xz', id: 51, url: 'https://api.github.com/repos/testowner/testrepo/releases/assets/51' },
+        ],
+      })
+      // Download xyz.narinfo
+      .mockResolvedValueOnce({ ok: true, text: async () => narinfoContent });
+
+    const fetched = await storage.fetchAllNarinfo();
+
+    expect(fetched).toBe(1);
+    // Verify the file was saved locally
+    const localContent = fs.readFileSync(path.join(tmpDir, 'narinfo', 'xyz.narinfo'), 'utf8');
+    expect(localContent).toBe(narinfoContent);
+  });
+
+  test('fetchAllNarinfo skips locally existing files', async () => {
+    // Pre-write a local narinfo file
+    fs.writeFileSync(path.join(tmpDir, 'narinfo', 'existing.narinfo'), 'local content');
+
+    mockFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => releaseResponse })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => [
+          { name: 'existing.narinfo', id: 60, url: 'https://api.github.com/repos/testowner/testrepo/releases/assets/60' },
+        ],
+      });
+
+    const fetched = await storage.fetchAllNarinfo();
+
+    expect(fetched).toBe(0);
+    // Original content preserved
+    expect(fs.readFileSync(path.join(tmpDir, 'narinfo', 'existing.narinfo'), 'utf8')).toBe('local content');
+    // No download call was made (only 2 calls: release lookup + list assets)
+    expect(mockFetch).toHaveBeenCalledTimes(2);
   });
 });

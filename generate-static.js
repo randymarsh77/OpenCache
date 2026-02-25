@@ -10,7 +10,7 @@ async function main() {
   const localStoragePath = config.localStoragePath;
   const narinfoDirPath = path.join(localStoragePath, 'narinfo');
 
-  const { owner, repo, releaseTag } = config.github;
+  const { owner, repo, releaseTag, token } = config.github;
 
   if (!owner || !repo) {
     console.error('Error: GITHUB_OWNER and GITHUB_REPO must be set.');
@@ -27,6 +27,21 @@ async function main() {
     console.error('  STORE_DIR            Nix store directory (default: /nix/store)');
     console.error('  CACHE_PRIORITY       Cache priority (default: 30)');
     process.exit(1);
+  }
+
+  // When using the github-releases backend, fetch all narinfo from the release
+  // so the generated site includes paths from all previous deploys (including
+  // other matrix jobs).
+  if (config.storageBackend === 'github-releases' && token) {
+    const GitHubReleasesStorage = require('./src/storage/github-releases');
+    const storage = new GitHubReleasesStorage({
+      token,
+      owner,
+      repo,
+      releaseTag,
+      localPath: localStoragePath,
+    });
+    await storage.fetchAllNarinfo();
   }
 
   console.log('Generating static Nix binary cache site...');

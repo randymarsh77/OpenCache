@@ -32,7 +32,7 @@ jobs:
 
 ## Matrix Builds
 
-Each matrix job runs **setup** + **deploy** independently — store paths are pushed directly to the backend from every job:
+Each matrix job runs **setup** + **deploy** independently — store paths and narinfo are pushed directly to the backend from every job. During static site generation, narinfo from all previous deploys (including other matrix jobs) is fetched from the release, so the generated site is always a complete manifest:
 
 ```yaml
 jobs:
