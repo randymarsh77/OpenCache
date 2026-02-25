@@ -2,9 +2,6 @@ name: 'OpenCache Save'
 description: 'Export new Nix store paths as a workflow artifact for later deployment with the deploy action'
 
 inputs:
-  paths:
-    description: 'Newline-separated Nix store paths to save. If omitted, new paths are auto-detected.'
-    required: false
   name:
     description: 'Unique name for this artifact (e.g. linux-x86_64). Used as a suffix for the artifact name.'
     required: false
@@ -13,7 +10,7 @@ inputs:
     description: 'Nix signing key (keyname:base64-ed25519-private). If provided, exported binaries will be signed.'
     required: false
   snapshot-path:
-    description: 'Path to the store snapshot file from the setup action (used for auto-detection when paths is omitted)'
+    description: 'Path to the store snapshot file from the setup action (used for auto-detection)'
     required: false
     default: '/tmp/opencache-setup/store-paths-before.txt'
   store-dir:
@@ -28,7 +25,6 @@ runs:
       id: export
       shell: bash
       env:
-        STORE_PATHS: ${{ inputs.paths }}
         ARTIFACT_NAME: ${{ inputs.name }}
         SNAPSHOT_PATH: ${{ inputs.snapshot-path }}
         STORE_DIR: ${{ inputs.store-dir }}
@@ -37,10 +33,7 @@ runs:
         EXPORT_DIR="/tmp/opencache-save/${ARTIFACT_NAME}"
         mkdir -p "$EXPORT_DIR"
 
-        if [ -n "$STORE_PATHS" ]; then
-          # Explicit paths provided
-          echo "$STORE_PATHS" | sed '/^$/d' > "$EXPORT_DIR/store-paths.txt"
-        elif [ -f "$SNAPSHOT_PATH" ]; then
+        if [ -f "$SNAPSHOT_PATH" ]; then
           # Auto-detect new paths by diffing the store against the setup snapshot
           echo "Auto-detecting new store paths..."
           CURRENT_PATHS=$(mktemp)

@@ -4,7 +4,7 @@ sidebar_position: 5
 
 # GitHub Actions
 
-OpenCache provides composable actions for integrating Nix binary caching into your CI workflows. Use **setup** + **deploy** for simple builds, or add **save** + **restore** when you need to defer deployment (e.g. matrix builds with a final aggregation job).
+OpenCache provides composable actions for integrating Nix binary caching into your CI workflows. Use **setup** + **deploy** for simple builds, or add **save** when you need to defer deployment (e.g. matrix builds with a final aggregation job). Store paths are always auto-detected — no need to manually capture build output.
 
 ## Standalone (Single Build)
 
@@ -25,7 +25,6 @@ jobs:
 
       - uses: randymarsh77/OpenCache/deploy@v1
         with:
-          backend: github-releases
           github-token: ${{ secrets.GITHUB_TOKEN }}
           static: ./site
 ```
@@ -52,13 +51,12 @@ jobs:
 
       - uses: randymarsh77/OpenCache/deploy@v1
         with:
-          backend: github-releases
           github-token: ${{ secrets.GITHUB_TOKEN }}
 ```
 
 ## Matrix Builds (deferred deploy)
 
-For workflows that aggregate other static content or prefer a single deploy step, use **save** in each matrix job to export new store paths as workflow artifacts, then **restore** + **deploy** in a final job. The backing store is not touched until deploy:
+For workflows that aggregate other static content or prefer a single deploy step, use **save** in each matrix job to export new store paths as workflow artifacts, then **deploy** in a final job. Deploy automatically restores saved artifacts — no explicit restore step needed:
 
 ```yaml
 jobs:
@@ -84,21 +82,37 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: randymarsh77/OpenCache/restore@v1
-        id: restore
+      - uses: randymarsh77/OpenCache/deploy@v1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          static: ./site
+```
+
+## With magic-nix-cache
+
+If you use [DeterminateSystems/magic-nix-cache-action](https://github.com/DeterminateSystems/magic-nix-cache-action), the deploy action auto-detects the running daemon and discovers built paths — no extra configuration needed:
+
+```yaml
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+
+      - name: Build
+        run: nix build
 
       - uses: randymarsh77/OpenCache/deploy@v1
         with:
-          paths-file: ${{ steps.restore.outputs.paths-file }}
-          export-dir: ${{ steps.restore.outputs.export-dir }}
-          backend: github-releases
           github-token: ${{ secrets.GITHUB_TOKEN }}
           static: ./site
 ```
 
 ## Matrix with magic-nix-cache (deferred deploy)
 
-If your matrix jobs use [DeterminateSystems/magic-nix-cache-action](https://github.com/DeterminateSystems/magic-nix-cache-action), you can use **save** to export the new paths as artifacts — it detects them using the daemon's startup timestamp — then **restore** + **deploy** in a final job:
+For matrix builds using magic-nix-cache, use **save** in each job. The save action detects new paths using the daemon's startup timestamp. Deploy in a final job auto-restores the artifacts:
 
 ```yaml
 jobs:
@@ -123,58 +137,10 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: randymarsh77/OpenCache/restore@v1
-        id: restore
-
       - uses: randymarsh77/OpenCache/deploy@v1
         with:
-          paths-file: ${{ steps.restore.outputs.paths-file }}
-          export-dir: ${{ steps.restore.outputs.export-dir }}
-          backend: github-releases
           github-token: ${{ secrets.GITHUB_TOKEN }}
           static: ./site
-```
-
-## With magic-nix-cache (single job)
-
-If you already use magic-nix-cache in a single-job workflow, the deploy action can discover built paths automatically — no separate setup step needed:
-
-```yaml
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      id-token: write
-    steps:
-      - uses: actions/checkout@v4
-      - uses: DeterminateSystems/nix-installer-action@main
-      - uses: DeterminateSystems/magic-nix-cache-action@main
-
-      - name: Build
-        run: nix build
-
-      - uses: randymarsh77/OpenCache/deploy@v1
-        with:
-          magic-nix-cache-addr: '127.0.0.1:37515'
-          backend: github-releases
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          static: ./site
-```
-
-This lets you benefit from both magic-nix-cache (fast GitHub Actions cache for CI) and OpenCache (permanent binary cache via GitHub Releases + Pages).
-
-## Explicit Paths (Legacy)
-
-You can still pass explicit store paths if preferred:
-
-```yaml
-      - name: Build
-        run: nix build --print-out-paths | tee /tmp/store-paths.txt
-
-      - uses: randymarsh77/OpenCache/deploy@v1
-        with:
-          paths-file: /tmp/store-paths.txt
 ```
 
 ## Action Reference
@@ -197,37 +163,22 @@ Exports new Nix store paths (including closures) as a workflow artifact. Auto-de
 
 | Input | Required | Default | Description |
 |-------|----------|---------|-------------|
-| `paths` | no | | Newline-separated Nix store paths (omit for auto-detection) |
 | `name` | no | `default` | Unique artifact name suffix (e.g. `linux-x86_64`) |
 | `signing-key` | no | | Nix signing key for signing exported binaries |
 | `snapshot-path` | no | `/tmp/opencache-setup/store-paths-before.txt` | Path to the store snapshot (from `setup`) |
 | `store-dir` | no | `/nix/store` | Path to the Nix store directory |
 
-### `restore`
-
-Downloads all saved artifacts matching a pattern and merges them into a single aggregated binary cache.
-
-| Input | Required | Default | Description |
-|-------|----------|---------|-------------|
-| `pattern` | no | `opencache-*` | Artifact name pattern to download |
-
-| Output | Description |
-|--------|-------------|
-| `paths-file` | Path to file listing all aggregated store paths |
-| `export-dir` | Directory containing the merged nix binary cache |
-
 ### `deploy`
 
-Starts a temporary OpenCache server, pushes store paths to the configured backend, and optionally generates a static site.
+Pushes store paths to the configured backend and optionally generates a static site. Auto-detects paths via setup snapshot, saved artifacts (auto-restored), or a running magic-nix-cache daemon.
 
 | Input | Required | Default | Description |
 |-------|----------|---------|-------------|
-| `paths` | ¹ | | Newline-separated store paths |
-| `paths-file` | ¹ | | File listing store paths (e.g. from `restore`) |
-| `export-dir` | no | | Binary cache export dir (from `restore`). When set, NARs are read from this directory instead of the local nix store. |
-| `snapshot-path` | no | `/tmp/opencache-setup/store-paths-before.txt` | Store snapshot from `setup` (for auto-detection). The default matches the `setup` action output. |
+| `paths-file` | no | | File listing store paths (for advanced use) |
+| `export-dir` | no | | Binary cache export dir. When set, NARs are read from this directory instead of the local nix store. |
+| `snapshot-path` | no | `/tmp/opencache-setup/store-paths-before.txt` | Store snapshot from `setup` (for auto-detection) |
 | `store-dir` | no | `/nix/store` | Path to the Nix store directory |
-| `magic-nix-cache-addr` | ¹ | | Address of a running magic-nix-cache daemon (default for magic-nix-cache-action is `127.0.0.1:37515`). Notifies the daemon and detects new paths automatically — no `setup` action needed. |
+| `artifact-pattern` | no | `opencache-*` | Artifact name pattern for auto-restore |
 | `backend` | no | `github-releases` | Storage backend |
 | `github-token` | no | | GitHub token (required for `github-releases`) |
 | `github-owner` | no | *current owner* | Repository owner |
@@ -239,4 +190,8 @@ Starts a temporary OpenCache server, pushes store paths to the configured backen
 | `port` | no | `18734` | Temporary server port |
 | `compression` | no | `none` | Compression for `nix copy` |
 
-¹ One of `paths`, `paths-file`, or `magic-nix-cache-addr` is required unless the `setup` action was used (which provides the default `snapshot-path`).
+Deploy auto-detects store paths in this priority order:
+1. Explicit `paths-file` input
+2. Saved artifacts (auto-restored from `opencache-*` pattern)
+3. Setup snapshot (diffing current store against snapshot)
+4. magic-nix-cache daemon at default address (`127.0.0.1:37515`)

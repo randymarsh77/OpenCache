@@ -2,27 +2,24 @@ name: 'OpenCache Deploy'
 description: 'Deploy Nix store paths to an OpenCache instance'
 
 inputs:
-  paths:
-    description: 'Newline-separated Nix store paths to deploy'
-    required: false
   paths-file:
-    description: 'Path to a file containing store paths to deploy (e.g. from the restore action)'
+    description: 'Path to a file containing store paths to deploy. When omitted, paths are auto-detected from the setup snapshot, restored artifacts, or a running magic-nix-cache daemon.'
     required: false
   export-dir:
-    description: 'Path to a nix binary cache export directory (e.g. from the restore action). When set, paths are copied from this store instead of the local nix store.'
+    description: 'Path to a nix binary cache export directory. When set, paths are copied from this store instead of the local nix store.'
     required: false
   snapshot-path:
-    description: 'Path to the store snapshot file from the setup action. When the file exists (and paths/paths-file are omitted), new store paths are auto-detected by diffing the nix store.'
+    description: 'Path to the store snapshot file from the setup action. When the file exists (and paths-file is omitted), new store paths are auto-detected by diffing the nix store.'
     required: false
     default: '/tmp/opencache-setup/store-paths-before.txt'
   store-dir:
     description: 'Path to the Nix store directory (used for auto-detection)'
     required: false
     default: '/nix/store'
-  magic-nix-cache-addr:
-    description: 'Address of a running magic-nix-cache daemon (e.g. 127.0.0.1:37515). When set, new store paths are discovered by querying the daemon and then deployed to OpenCache.'
+  artifact-pattern:
+    description: 'Artifact name pattern for auto-restore (default: opencache-*). Used when no paths-file or snapshot is available.'
     required: false
-    default: ''
+    default: 'opencache-*'
   backend:
     description: 'Storage backend: github-releases, s3, or local'
     required: false
@@ -61,50 +58,102 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Try restoring artifacts
+      id: try-restore
+      if: inputs.paths-file == ''
+      continue-on-error: true
+      uses: actions/download-artifact@v4
+      with:
+        pattern: ${{ inputs.artifact-pattern }}
+        path: /tmp/opencache-restore
+
+    - name: Aggregate restored artifacts
+      id: aggregate
+      if: steps.try-restore.outcome == 'success'
+      shell: bash
+      run: |
+        set -euo pipefail
+        AGGREGATE_DIR="/tmp/opencache-aggregate"
+
+        # Check if any artifacts were actually downloaded
+        if [ ! -d /tmp/opencache-restore ] || [ -z "$(ls -A /tmp/opencache-restore 2>/dev/null)" ]; then
+          echo "No artifacts found"
+          echo "found=false" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        mkdir -p "$AGGREGATE_DIR/nix-cache"
+        : > "$AGGREGATE_DIR/store-paths.txt"
+
+        for dir in /tmp/opencache-restore/*/; do
+          [ -d "$dir" ] || continue
+          echo "Merging: $dir"
+
+          if [ -f "$dir/store-paths.txt" ]; then
+            cat "$dir/store-paths.txt" >> "$AGGREGATE_DIR/store-paths.txt"
+          fi
+
+          if [ -d "$dir/nix-cache" ]; then
+            cp -rn "$dir/nix-cache/." "$AGGREGATE_DIR/nix-cache/" 2>/dev/null || true
+          fi
+        done
+
+        sort -u -o "$AGGREGATE_DIR/store-paths.txt" "$AGGREGATE_DIR/store-paths.txt"
+
+        count=$(wc -l < "$AGGREGATE_DIR/store-paths.txt")
+        if [ "$count" -gt 0 ]; then
+          echo "Restored $count unique store path(s) from artifacts"
+          echo "found=true" >> "$GITHUB_OUTPUT"
+          echo "paths-file=$AGGREGATE_DIR/store-paths.txt" >> "$GITHUB_OUTPUT"
+          echo "export-dir=$AGGREGATE_DIR/nix-cache" >> "$GITHUB_OUTPUT"
+        else
+          echo "No store paths found in artifacts"
+          echo "found=false" >> "$GITHUB_OUTPUT"
+        fi
+
     - name: Resolve store paths
       id: prepare
       shell: bash
       env:
-        INPUT_PATHS: ${{ inputs.paths }}
         INPUT_PATHS_FILE: ${{ inputs.paths-file }}
         SNAPSHOT_PATH: ${{ inputs.snapshot-path }}
         STORE_DIR: ${{ inputs.store-dir }}
-        MNC_ADDR: ${{ inputs.magic-nix-cache-addr }}
+        RESTORED_FOUND: ${{ steps.aggregate.outputs.found }}
+        RESTORED_PATHS_FILE: ${{ steps.aggregate.outputs.paths-file }}
       run: |
         set -euo pipefail
         PATHS_FILE="/tmp/opencache-deploy-paths.txt"
 
         if [ -n "$INPUT_PATHS_FILE" ] && [ -f "$INPUT_PATHS_FILE" ]; then
+          # Explicit paths-file provided
           cp "$INPUT_PATHS_FILE" "$PATHS_FILE"
-        elif [ -n "$INPUT_PATHS" ]; then
-          echo "$INPUT_PATHS" | sed '/^$/d' > "$PATHS_FILE"
-        elif [ -n "$MNC_ADDR" ]; then
-          # Discover paths from magic-nix-cache - the daemon tracks new paths
-          # automatically, so we just need to ask it to finish and we push from
-          # the local store
-          echo "Discovering paths from magic-nix-cache at $MNC_ADDR..."
-          if ! RESPONSE=$(curl -sf -X POST "http://${MNC_ADDR}/api/workflow-finish" 2>&1); then
-            echo "::warning::Could not reach magic-nix-cache at $MNC_ADDR: $RESPONSE"
-          else
+
+        elif [ "$RESTORED_FOUND" = "true" ] && [ -n "$RESTORED_PATHS_FILE" ] && [ -f "$RESTORED_PATHS_FILE" ]; then
+          # Auto-restored from artifacts (deferred deploy pattern)
+          cp "$RESTORED_PATHS_FILE" "$PATHS_FILE"
+
+        elif [ -n "$SNAPSHOT_PATH" ] && [ -f "$SNAPSHOT_PATH" ]; then
+          # Auto-detect new paths by diffing the store (setup was used in same job)
+          echo "Auto-detecting new store paths..."
+          CURRENT_PATHS=$(mktemp)
+          find "$STORE_DIR" -maxdepth 1 -mindepth 1 \
+            -not -name '.links' \
+            -not -name '*.drv' \
+            -not -name '*.chroot' \
+            | sort > "$CURRENT_PATHS"
+          comm -23 "$CURRENT_PATHS" "$SNAPSHOT_PATH" > "$PATHS_FILE"
+          rm -f "$CURRENT_PATHS"
+
+        else
+          # Last resort: try magic-nix-cache at default address
+          MNC_ADDR="127.0.0.1:37515"
+          echo "Trying magic-nix-cache at default address $MNC_ADDR..."
+
+          if RESPONSE=$(curl -sf -X POST "http://${MNC_ADDR}/api/workflow-finish" 2>&1); then
             NUM_NEW=$(echo "$RESPONSE" | grep -o '"num_new_paths":[0-9]*' | grep -o '[0-9]*' || echo "unknown")
             echo "magic-nix-cache reported $NUM_NEW new path(s)"
-          fi
 
-          if [ -n "$SNAPSHOT_PATH" ] && [ -f "$SNAPSHOT_PATH" ]; then
-            # Use snapshot for accurate diffing when available
-            echo "Diffing store against snapshot..."
-            CURRENT_PATHS=$(mktemp)
-            find "$STORE_DIR" -maxdepth 1 -mindepth 1 \
-              -not -name '.links' \
-              -not -name '*.drv' \
-              -not -name '*.chroot' \
-              | sort > "$CURRENT_PATHS"
-            comm -23 "$CURRENT_PATHS" "$SNAPSHOT_PATH" > "$PATHS_FILE"
-            rm -f "$CURRENT_PATHS"
-          else
-            # Use magic-nix-cache's daemon.pid as a time reference to find
-            # store paths added after the daemon started (i.e. during the build).
-            # The MAGIC_NIX_CACHE_DAEMONDIR env var is set by magic-nix-cache-action.
+            # Use daemon.pid as a time reference to find paths added during the build
             MNC_DAEMON_DIR="${MAGIC_NIX_CACHE_DAEMONDIR:-}"
             MNC_PID_FILE="$MNC_DAEMON_DIR/daemon.pid"
 
@@ -117,28 +166,17 @@ runs:
                 -cnewer "$MNC_PID_FILE" \
                 | sort > "$PATHS_FILE"
             else
-              echo "::warning::No store snapshot or magic-nix-cache reference found; all current store paths will be deployed. Use the setup action for accurate diffing."
+              echo "::warning::magic-nix-cache is running but MAGIC_NIX_CACHE_DAEMONDIR not set; deploying all current store paths."
               find "$STORE_DIR" -maxdepth 1 -mindepth 1 \
                 -not -name '.links' \
                 -not -name '*.drv' \
                 -not -name '*.chroot' \
                 | sort > "$PATHS_FILE"
             fi
+          else
+            echo "::error::Could not detect store paths. Use the setup action, save+deploy pattern, or ensure magic-nix-cache is running."
+            exit 1
           fi
-        elif [ -n "$SNAPSHOT_PATH" ] && [ -f "$SNAPSHOT_PATH" ]; then
-          # Auto-detect new paths by diffing the store
-          echo "Auto-detecting new store paths..."
-          CURRENT_PATHS=$(mktemp)
-          find "$STORE_DIR" -maxdepth 1 -mindepth 1 \
-            -not -name '.links' \
-            -not -name '*.drv' \
-            -not -name '*.chroot' \
-            | sort > "$CURRENT_PATHS"
-          comm -23 "$CURRENT_PATHS" "$SNAPSHOT_PATH" > "$PATHS_FILE"
-          rm -f "$CURRENT_PATHS"
-        else
-          echo "::error::One of 'paths', 'paths-file', 'magic-nix-cache-addr', or 'snapshot-path' (via setup action) is required"
-          exit 1
         fi
 
         count=$(wc -l < "$PATHS_FILE")
@@ -196,7 +234,7 @@ runs:
     - name: Push store paths
       shell: bash
       env:
-        EXPORT_DIR: ${{ inputs.export-dir }}
+        EXPORT_DIR: ${{ inputs.export-dir || steps.aggregate.outputs.export-dir }}
         PORT: ${{ inputs.port }}
         COMPRESSION: ${{ inputs.compression }}
       run: |
