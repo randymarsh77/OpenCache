@@ -3,13 +3,13 @@ description: 'Deploy Nix store paths to an OpenCache instance'
 
 inputs:
   paths:
-    description: 'Newline-separated Nix store paths to deploy (standalone mode, without save/restore)'
+    description: 'Newline-separated Nix store paths to deploy'
     required: false
   paths-file:
-    description: 'Path to a file containing store paths (e.g. from the restore action)'
+    description: 'Path to a file containing store paths to deploy'
     required: false
   export-dir:
-    description: 'Path to a nix binary cache export directory (from restore action). When set, paths are copied from this store instead of the local nix store.'
+    description: 'Path to a nix binary cache export directory. When set, paths are copied from this store instead of the local nix store.'
     required: false
   snapshot-path:
     description: 'Path to the store snapshot file from the setup action. When the file exists (and paths/paths-file are omitted), new store paths are auto-detected by diffing the nix store.'

@@ -1,5 +1,5 @@
 name: 'OpenCache Setup'
-description: 'Snapshot the current Nix store so that new paths can be auto-detected later by the save or deploy actions'
+description: 'Snapshot the current Nix store so that new paths can be auto-detected later by the deploy action'
 
 inputs:
   store-dir:

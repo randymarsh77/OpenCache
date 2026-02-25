@@ -17,7 +17,7 @@ const FeatureList = [
     description: (
       <>
         Add a single workflow step to cache your Nix build outputs.
-        Supports matrix builds with save, restore, and deploy actions.
+        Supports matrix builds — each job deploys directly to the cache.
       </>
     ),
   },

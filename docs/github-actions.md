@@ -4,7 +4,7 @@ sidebar_position: 5
 
 # GitHub Actions
 
-OpenCache provides four composable actions for integrating Nix binary caching into your CI workflows. The **setup** action snapshots the Nix store before builds, enabling automatic detection of new store paths — no need to manually capture build output.
+OpenCache provides two composable actions for integrating Nix binary caching into your CI workflows. The **setup** action snapshots the Nix store before builds, enabling automatic detection of new store paths — no need to manually capture build output.
 
 ## Standalone (Single Build)
 
@@ -30,9 +30,9 @@ jobs:
           static: ./site
 ```
 
-## Matrix Builds (setup + save → restore → deploy)
+## Matrix Builds
 
-Use **setup** + **save** in each matrix job, **restore** + **deploy** in a final job:
+Each matrix job runs **setup** + **deploy** independently — store paths are pushed directly to the backend from every job:
 
 ```yaml
 jobs:
@@ -50,24 +50,10 @@ jobs:
       - name: Build
         run: nix build
 
-      - uses: randymarsh77/OpenCache/save@v1
-        with:
-          name: ${{ matrix.os }}
-
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: randymarsh77/OpenCache/restore@v1
-        id: restore
-
       - uses: randymarsh77/OpenCache/deploy@v1
         with:
-          paths-file: ${{ steps.restore.outputs.paths-file }}
-          export-dir: ${{ steps.restore.outputs.export-dir }}
           backend: github-releases
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          static: ./site
 ```
 
 ## With magic-nix-cache
@@ -116,7 +102,7 @@ You can still pass explicit store paths if preferred:
 
 ### `setup`
 
-Snapshots the current Nix store so new paths can be auto-detected by the save or deploy actions.
+Snapshots the current Nix store so new paths can be auto-detected by the deploy action.
 
 | Input | Required | Default | Description |
 |-------|----------|---------|-------------|
@@ -126,40 +112,15 @@ Snapshots the current Nix store so new paths can be auto-detected by the save or
 |--------|-------------|
 | `snapshot-path` | Path to the file containing the initial store snapshot |
 
-### `save`
-
-Exports Nix store paths (including closures) and uploads them as a workflow artifact for later retrieval. When `paths` is omitted, new paths are auto-detected using the snapshot from `setup`.
-
-| Input | Required | Default | Description |
-|-------|----------|---------|-------------|
-| `paths` | no | | Newline-separated Nix store paths (omit for auto-detection) |
-| `name` | no | `default` | Unique artifact name suffix (e.g. `linux-x86_64`) |
-| `signing-key` | no | | Nix signing key for signing exported binaries |
-| `snapshot-path` | no | `/tmp/opencache-setup/store-paths-before.txt` | Path to the store snapshot (from `setup`) |
-| `store-dir` | no | `/nix/store` | Path to the Nix store directory |
-
-### `restore`
-
-Downloads all saved artifacts matching a pattern and merges them into a single aggregated binary cache.
-
-| Input | Required | Default | Description |
-|-------|----------|---------|-------------|
-| `pattern` | no | `opencache-*` | Artifact name pattern to download |
-
-| Output | Description |
-|--------|-------------|
-| `paths-file` | Path to file listing all aggregated store paths |
-| `export-dir` | Directory containing the merged nix binary cache |
-
 ### `deploy`
 
 Starts a temporary OpenCache server, pushes store paths to the configured backend, and optionally generates a static site.
 
 | Input | Required | Default | Description |
 |-------|----------|---------|-------------|
-| `paths` | ¹ | | Newline-separated store paths (standalone mode) |
-| `paths-file` | ¹ | | File listing store paths (e.g. from `restore`) |
-| `export-dir` | no | | Binary cache export dir (from `restore`). When set, NARs are read from this directory instead of the local nix store. |
+| `paths` | ¹ | | Newline-separated store paths |
+| `paths-file` | ¹ | | File listing store paths |
+| `export-dir` | no | | Binary cache export dir. When set, NARs are read from this directory instead of the local nix store. |
 | `snapshot-path` | no | `/tmp/opencache-setup/store-paths-before.txt` | Store snapshot from `setup` (for auto-detection). The default matches the `setup` action output. |
 | `store-dir` | no | `/nix/store` | Path to the Nix store directory |
 | `magic-nix-cache-addr` | ¹ | | Address of a running magic-nix-cache daemon (default for magic-nix-cache-action is `127.0.0.1:37515`). Notifies the daemon and detects new paths automatically — no `setup` action needed. |
