@@ -1,5 +1,5 @@
 name: 'OpenCache Restore'
-description: 'Restore and aggregate previously saved Nix store paths for deployment'
+description: 'Download and aggregate previously saved Nix store path artifacts for deployment'
 
 inputs:
   pattern:

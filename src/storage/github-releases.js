@@ -115,11 +115,86 @@ class GitHubReleasesStorage {
 
   async putNarinfo(hash, content) {
     console.log(`[github-releases] Storing narinfo ${hash}`);
+    // Write locally for immediate use by the server and static site generation
     await fsp.writeFile(
       path.join(this.localPath, 'narinfo', `${hash}.narinfo`),
       content,
       'utf8'
     );
+
+    // Also persist to GitHub Releases so other jobs (e.g. matrix builds) and
+    // future static site generations can discover all narinfo across runs.
+    const filename = `${hash}.narinfo`;
+    const releaseId = await this._getReleaseId();
+    const body = Buffer.from(content, 'utf8');
+
+    // Delete existing asset with the same name if present
+    const existing = await this._findAsset(filename);
+    if (existing) {
+      await fetch(
+        `https://api.github.com/repos/${this.owner}/${this.repo}/releases/assets/${existing.id}`,
+        { method: 'DELETE', headers: this._headers() }
+      );
+    }
+
+    const uploadUrl = `https://uploads.github.com/repos/${this.owner}/${this.repo}/releases/${releaseId}/assets?name=${encodeURIComponent(filename)}`;
+    const resp = await fetch(uploadUrl, {
+      method: 'POST',
+      headers: {
+        ...this._headers(),
+        'Content-Type': 'text/plain',
+        'Content-Length': String(body.length),
+      },
+      body,
+    });
+
+    if (!resp.ok) {
+      const errBody = await resp.text();
+      console.warn(`[github-releases] Warning: failed to upload narinfo asset ${filename}: ${resp.status} ${errBody}`);
+    }
+  }
+
+  /**
+   * Download all `.narinfo` release assets into the local narinfo directory.
+   *
+   * This ensures the local narinfo directory is a complete superset of all
+   * narinfo ever pushed to the release (across matrix jobs, previous runs, etc.).
+   * Called before static site generation so the generated site is complete.
+   *
+   * @returns {Promise<number>} number of narinfo files fetched from the release
+   */
+  async fetchAllNarinfo() {
+    console.log('[github-releases] Fetching all narinfo from release...');
+    const assets = await this._listAllAssets();
+    const narinfoAssets = assets.filter(a => a.name.endsWith('.narinfo'));
+    const narinfoDir = path.join(this.localPath, 'narinfo');
+    let fetched = 0;
+
+    for (const asset of narinfoAssets) {
+      const localFile = path.join(narinfoDir, asset.name);
+      // Skip if we already have this file locally (just written by this job)
+      if (await this._exists(localFile)) continue;
+
+      const resp = await fetch(asset.url, {
+        headers: {
+          ...this._headers(),
+          Accept: 'application/octet-stream',
+        },
+        redirect: 'follow',
+      });
+
+      if (!resp.ok) {
+        console.warn(`[github-releases] Warning: could not download narinfo asset ${asset.name}: ${resp.status}`);
+        continue;
+      }
+
+      const content = await resp.text();
+      await fsp.writeFile(localFile, content, 'utf8');
+      fetched++;
+    }
+
+    console.log(`[github-releases] Fetched ${fetched} narinfo file(s) from release (${narinfoAssets.length} total on release)`);
+    return fetched;
   }
 
   // ── NAR files (GitHub Release assets) ───────────────────────────────────────
@@ -311,6 +386,9 @@ class GitHubReleasesStorage {
     const referencedNames = [];
 
     for (const asset of assets) {
+      // Skip narinfo assets — they are metadata, not orphan candidates
+      if (asset.name.endsWith('.narinfo')) continue;
+
       if (referenced.has(asset.name)) {
         referencedNames.push(asset.name);
         continue;

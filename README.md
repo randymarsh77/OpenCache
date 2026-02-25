@@ -32,19 +32,32 @@ permissions:
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.pages.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
       - uses: DeterminateSystems/nix-installer-action@main
 
+      - uses: randymarsh77/OpenCache/setup@v1
+
       - name: Build
-        run: nix build --print-out-paths | tee /tmp/store-paths.txt
+        run: nix build
 
       - uses: randymarsh77/OpenCache/deploy@v1
         with:
-          paths-file: /tmp/store-paths.txt
           github-token: ${{ secrets.GITHUB_TOKEN }}
           static: ./site
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./site
+
+      - uses: actions/deploy-pages@v4
+        id: pages
 ```
+
+No need to capture store paths manually — the **setup** action snapshots the Nix store before your build, and the **deploy** action auto-detects new paths by diffing the store.
 
 Then point Nix at your cache:
 
