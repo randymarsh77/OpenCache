@@ -78,17 +78,6 @@ runs:
           cp "$INPUT_PATHS_FILE" "$PATHS_FILE"
         elif [ -n "$INPUT_PATHS" ]; then
           echo "$INPUT_PATHS" | sed '/^$/d' > "$PATHS_FILE"
-        elif [ -n "$SNAPSHOT_PATH" ] && [ -f "$SNAPSHOT_PATH" ]; then
-          # Auto-detect new paths by diffing the store
-          echo "Auto-detecting new store paths..."
-          CURRENT_PATHS=$(mktemp)
-          find "$STORE_DIR" -maxdepth 1 -mindepth 1 \
-            -not -name '.links' \
-            -not -name '*.drv' \
-            -not -name '*.chroot' \
-            | sort > "$CURRENT_PATHS"
-          comm -23 "$CURRENT_PATHS" "$SNAPSHOT_PATH" > "$PATHS_FILE"
-          rm -f "$CURRENT_PATHS"
         elif [ -n "$MNC_ADDR" ]; then
           # Discover paths from magic-nix-cache - the daemon tracks new paths
           # automatically, so we just need to ask it to finish and we push from
@@ -113,15 +102,42 @@ runs:
             comm -23 "$CURRENT_PATHS" "$SNAPSHOT_PATH" > "$PATHS_FILE"
             rm -f "$CURRENT_PATHS"
           else
-            echo "::warning::No store snapshot found; all current store paths will be deployed. Use the setup action for accurate diffing."
-            find "$STORE_DIR" -maxdepth 1 -mindepth 1 \
-              -not -name '.links' \
-              -not -name '*.drv' \
-              -not -name '*.chroot' \
-              | sort > "$PATHS_FILE"
+            # Use magic-nix-cache's daemon.pid as a time reference to find
+            # store paths added after the daemon started (i.e. during the build).
+            # The MAGIC_NIX_CACHE_DAEMONDIR env var is set by magic-nix-cache-action.
+            MNC_DAEMON_DIR="${MAGIC_NIX_CACHE_DAEMONDIR:-}"
+            MNC_PID_FILE="$MNC_DAEMON_DIR/daemon.pid"
+
+            if [ -f "$MNC_PID_FILE" ]; then
+              echo "Detecting new store paths since magic-nix-cache started..."
+              find "$STORE_DIR" -maxdepth 1 -mindepth 1 \
+                -not -name '.links' \
+                -not -name '*.drv' \
+                -not -name '*.chroot' \
+                -cnewer "$MNC_PID_FILE" \
+                | sort > "$PATHS_FILE"
+            else
+              echo "::warning::No store snapshot or magic-nix-cache reference found; all current store paths will be deployed. Use the setup action for accurate diffing."
+              find "$STORE_DIR" -maxdepth 1 -mindepth 1 \
+                -not -name '.links' \
+                -not -name '*.drv' \
+                -not -name '*.chroot' \
+                | sort > "$PATHS_FILE"
+            fi
           fi
+        elif [ -n "$SNAPSHOT_PATH" ] && [ -f "$SNAPSHOT_PATH" ]; then
+          # Auto-detect new paths by diffing the store
+          echo "Auto-detecting new store paths..."
+          CURRENT_PATHS=$(mktemp)
+          find "$STORE_DIR" -maxdepth 1 -mindepth 1 \
+            -not -name '.links' \
+            -not -name '*.drv' \
+            -not -name '*.chroot' \
+            | sort > "$CURRENT_PATHS"
+          comm -23 "$CURRENT_PATHS" "$SNAPSHOT_PATH" > "$PATHS_FILE"
+          rm -f "$CURRENT_PATHS"
         else
-          echo "::error::One of 'paths', 'paths-file', 'snapshot-path', or 'magic-nix-cache-addr' is required"
+          echo "::error::One of 'paths', 'paths-file', 'magic-nix-cache-addr', or 'snapshot-path' (via setup action) is required"
           exit 1
         fi
 

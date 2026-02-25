@@ -72,7 +72,7 @@ jobs:
 
 ## With magic-nix-cache
 
-If you already use [DeterminateSystems/magic-nix-cache-action](https://github.com/DeterminateSystems/magic-nix-cache-action), you can hook the deploy action into the magic-nix-cache daemon to discover built paths automatically. The default address is `127.0.0.1:37515` (the default `listen` input of magic-nix-cache-action). Combine with the **setup** action for accurate path diffing:
+If you already use [DeterminateSystems/magic-nix-cache-action](https://github.com/DeterminateSystems/magic-nix-cache-action), you can hook the deploy action into the magic-nix-cache daemon to discover built paths automatically — no separate setup step needed. The deploy action detects new store paths using the daemon's startup timestamp:
 
 ```yaml
 jobs:
@@ -85,8 +85,6 @@ jobs:
       - uses: actions/checkout@v4
       - uses: DeterminateSystems/nix-installer-action@main
       - uses: DeterminateSystems/magic-nix-cache-action@main
-
-      - uses: randymarsh77/OpenCache/setup@v1
 
       - name: Build
         run: nix build
@@ -164,7 +162,7 @@ Starts a temporary OpenCache server, pushes store paths to the configured backen
 | `export-dir` | no | | Binary cache export dir (from `restore`). When set, NARs are read from this directory instead of the local nix store. |
 | `snapshot-path` | no | `/tmp/opencache-setup/store-paths-before.txt` | Store snapshot from `setup` (for auto-detection). The default matches the `setup` action output. |
 | `store-dir` | no | `/nix/store` | Path to the Nix store directory |
-| `magic-nix-cache-addr` | ¹ | | Address of a running magic-nix-cache daemon (default for magic-nix-cache-action is `127.0.0.1:37515`). Notifies the daemon and uses snapshot-based diffing if available. |
+| `magic-nix-cache-addr` | ¹ | | Address of a running magic-nix-cache daemon (default for magic-nix-cache-action is `127.0.0.1:37515`). Notifies the daemon and detects new paths automatically — no `setup` action needed. |
 | `backend` | no | `github-releases` | Storage backend |
 | `github-token` | no | | GitHub token (required for `github-releases`) |
 | `github-owner` | no | *current owner* | Repository owner |
